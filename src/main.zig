@@ -14,6 +14,7 @@ var string_buf_write_idx: usize = 0;
 
 var immediates: [1 << 20]i32 align(64) = .{0} ** (1 << 20);
 var immediate_count: usize = 1;
+var ops: [1024]Operation = undefined;
 
 const Instruction = enum {
     Let,
@@ -24,11 +25,10 @@ const Instruction = enum {
 
 const Opcode = enum {
     LoadImm,
-    Add,
 
+    Add,
     Sub,
     Mul,
-
     Div,
 
     BranchEq,
@@ -68,8 +68,6 @@ const Operation = struct {
         },
     };
 };
-
-var ops: [1024]Operation = undefined;
 
 inline fn func_from_opcode(opcode: Opcode) *const fn (usize) void {
     const funcs = [_]*const fn (usize) void{
@@ -182,13 +180,6 @@ fn Exit(ip: usize) void {
     return;
 }
 
-fn exit_after(tenths: usize) noreturn {
-    const tenth = std.time.ns_per_s / 10;
-    const start = std.time.Instant.now() catch unreachable;
-    while ((std.time.Instant.now() catch unreachable).since(start) < tenth * tenths) asm volatile ("");
-    @panic("done");
-}
-
 pub fn main() !void {
     const read_bytes = stdin.readAll(&io_buf) catch unreachable;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -221,7 +212,8 @@ pub fn main() !void {
     defer operations.deinit();
 
     while (it < read_bytes) {
-        // longest possible line is '1000000000 if 1000000000 <= 1000000000 THEN GOTO 1000000000', which has length 59, so we load 64 bytes, aka one cache line
+        // longest possible line which isn't a print is '1000000000 if 1000000000 <= 1000000000 THEN GOTO 1000000000', which has length 59, so we load 64 bytes, aka one cache line
+        // print with long strings is handled separately
         var first_64_bytes: @Vector(64, u8) = io_buf[it..][0..64].*;
 
         const newlines: @Vector(64, u8) = @splat('\n');
@@ -242,8 +234,7 @@ pub fn main() !void {
         const get_token_length = struct {
             fn impl(mask: *u64) u8 {
                 const res = @ctz(mask.*);
-                mask.* >>= @intCast(res);
-                mask.* >>= 1;
+                mask.* >>= @truncate(res + 1);
                 return res;
             }
         }.impl;
@@ -272,7 +263,7 @@ pub fn main() !void {
                 if ('A' <= slice[0] and slice[0] <= 'Z') {
                     res = &variables[slice[0] - 'A'];
                 } else {
-                    immediates[immediate_count] = std.fmt.parseInt(i32, slice, 10) catch exit_after(1);
+                    immediates[immediate_count] = std.fmt.parseInt(i32, slice, 10) catch unreachable;
                     res = &immediates[immediate_count];
                     immediate_count += 1;
                 }
@@ -390,8 +381,12 @@ pub fn main() !void {
             => {
                 const start_print = number_length + 1 + first_token_length + 1;
                 if (cleaned_line[start_print] == '"') {
+
+                    // this is somewhat subtle, line could be longer than 64 bytes so we look at the whole buffer and update line length accordingly
                     const end_print = start_print + 1 + std.mem.indexOfScalar(u8, io_buf[it..][start_print + 1 ..], '"').?;
                     line_length = end_print + 1;
+
+                    // copy strings to separate buffer, io_buf will be overwritten
                     const str = io_buf[it..][start_print + 1 .. end_print];
                     @memcpy(string_buf[string_buf_write_idx..][0..str.len], str);
                     const str_ptr = string_buf[string_buf_write_idx..].ptr;
@@ -426,8 +421,12 @@ pub fn main() !void {
             => {
                 const start_print = number_length + 1 + first_token_length + 1;
                 if (cleaned_line[start_print] == '"') {
+
+                    // this is somewhat subtle, line could be longer than 64 bytes so we look at the whole buffer and update line length accordingly
                     const end_print = start_print + 1 + std.mem.indexOfScalar(u8, io_buf[it..][start_print + 1 ..], '"').?;
                     line_length = end_print + 1;
+
+                    // copy strings to separate buffer, io_buf will be overwritten
                     const str = io_buf[it..][start_print + 1 .. end_print];
                     @memcpy(string_buf[string_buf_write_idx..][0..str.len], str);
                     const str_ptr = string_buf[string_buf_write_idx..].ptr;
