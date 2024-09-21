@@ -499,12 +499,19 @@ pub fn main() !void {
     _ = stdout.write(fbstream.getWritten()) catch unreachable;
 
     const t6 = std.time.Instant.now() catch unreachable;
-    std.debug.print("reading input program took: {}\n", .{std.fmt.fmtDuration(t2.since(t1))});
-    std.debug.print("parsing input program took: {}\n", .{std.fmt.fmtDuration(t3.since(t2))});
-    std.debug.print("fixing line numbers took: {}\n", .{std.fmt.fmtDuration(t4.since(t3))});
-    std.debug.print("running program took: {}\n", .{std.fmt.fmtDuration(t5.since(t4))});
-    std.debug.print("writing output took: {}\n", .{std.fmt.fmtDuration(t6.since(t5))});
-    std.debug.print("total: {}\n", .{std.fmt.fmtDuration(t6.since(t1))});
+
+    const reading = t2.since(t1);
+    std.debug.print("reading input program took: {}\n", .{std.fmt.fmtDuration(reading)}); // 0.000007s on kattis
+    const parsing = t3.since(t2);
+    std.debug.print("parsing input program took: {}\n", .{std.fmt.fmtDuration(parsing)}); // 0.0003s on kattis
+    const fixing = t4.since(t3);
+    std.debug.print("fixing line numbers took: {}\n", .{std.fmt.fmtDuration(fixing)}); // 0.0002s on kattis
+    const running = t5.since(t4);
+    std.debug.print("running program took: {}\n", .{std.fmt.fmtDuration(running)}); // 0.0029s on kattis
+    const writing = t6.since(t5);
+    std.debug.print("writing output took: {}\n", .{std.fmt.fmtDuration(writing)}); // 0.000006s on kattis
+    const total = t6.since(t1);
+    std.debug.print("total: {}\n", .{std.fmt.fmtDuration(total)});
 }
 // prime bench results on my machine:
 // reading input program took: 3.886us
