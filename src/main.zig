@@ -473,9 +473,9 @@ pub fn main() !void {
     std.debug.print("total: {}\n", .{std.fmt.fmtDuration(total)});
 }
 // prime bench results on my machine:
-// reading input program took: 1.466us
-// parsing input program took: 6.246us (0.0711 GB/s)
-// fixing line numbers took: 4.032us
-// running program took: 465.438us
-// writing output took: 432ns
-// total: 477.614us
+// reading input program took: 1.497us
+// parsing input program took: 6.292us (0.0594 GB/s)
+// fixing line numbers took: 2.795us
+// running program took: 225.774us
+// writing output took: 13.945us
+// total: 250.303us
