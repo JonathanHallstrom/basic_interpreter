@@ -182,7 +182,9 @@ fn exitInterpreter(ip: usize) void {
 }
 
 pub fn main() !void {
+    const t1 = std.time.Instant.now() catch unreachable;
     const read_bytes = stdin.readAll(&io_buf) catch unreachable;
+    const t2 = std.time.Instant.now() catch unreachable;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -462,6 +464,7 @@ pub fn main() !void {
 
         it += line_length + 1;
     }
+    const t3 = std.time.Instant.now() catch unreachable;
 
     std.mem.sortUnstable(ParsedOperation, operations.items, void{}, ParsedOperation.cmp);
 
@@ -488,7 +491,25 @@ pub fn main() !void {
             else => {},
         }
     }
+    const t4 = std.time.Instant.now() catch unreachable;
+
     funcFromOpcode(ops[0].opcode)(0);
+    const t5 = std.time.Instant.now() catch unreachable;
 
     _ = stdout.write(fbstream.getWritten()) catch unreachable;
+
+    const t6 = std.time.Instant.now() catch unreachable;
+    std.debug.print("reading input program took: {}\n", .{std.fmt.fmtDuration(t2.since(t1))});
+    std.debug.print("parsing input program took: {}\n", .{std.fmt.fmtDuration(t3.since(t2))});
+    std.debug.print("fixing line numbers took: {}\n", .{std.fmt.fmtDuration(t4.since(t3))});
+    std.debug.print("running program took: {}\n", .{std.fmt.fmtDuration(t5.since(t4))});
+    std.debug.print("writing output took: {}\n", .{std.fmt.fmtDuration(t6.since(t5))});
+    std.debug.print("total: {}\n", .{std.fmt.fmtDuration(t6.since(t1))});
 }
+// prime bench results on my machine:
+// reading input program took: 3.886us
+// parsing input program took: 39.734us
+// fixing line numbers took: 10.176us
+// running program took: 396.136us
+// writing output took: 35.21us
+// total: 485.142us
