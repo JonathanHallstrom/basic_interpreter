@@ -12,9 +12,10 @@ var variables: [26]i32 align(64) = .{0} ** 26;
 var string_buf: [1 << 20]u8 align(64) = undefined;
 var string_buf_write_idx: usize = 0;
 
-var immediates: [1 << 20]i32 align(64) = .{0} ** (1 << 20);
-var immediate_count: usize = 1;
 var ops: [1024]Operation = undefined;
+// at most 2 immediates per line
+var immediates: [2 * ops.len]i32 align(64) = .{0} ** (2 * ops.len);
+var immediate_count: usize = 0;
 
 const Instruction = enum {
     Let,
@@ -69,113 +70,113 @@ const Operation = struct {
     };
 };
 
-inline fn func_from_opcode(opcode: Opcode) *const fn (usize) void {
+inline fn funcFromOpcode(opcode: Opcode) *const fn (usize) void {
     const funcs = [_]*const fn (usize) void{
-        &LoadImm,
-        &Add,
-        &Sub,
-        &Mul,
-        &Div,
-        &BranchEq,
-        &BranchNe,
-        &BranchLe,
-        &BranchLq,
-        &BranchGr,
-        &BranchGq,
-        &PrintVar,
-        &PrintLnVar,
-        &PrintStr,
-        &PrintLnStr,
-        &Exit,
+        &loadImm,
+        &add,
+        &sub,
+        &mul,
+        &div,
+        &branchEq,
+        &branchNe,
+        &branchLe,
+        &branchLq,
+        &branchGr,
+        &branchGq,
+        &printVar,
+        &printLnVar,
+        &printStr,
+        &printLnStr,
+        &exitInterpreter,
     };
     return funcs[@intFromEnum(opcode)];
 }
 
-inline fn advance(ip: usize) void {
-    return @call(.always_tail, func_from_opcode(ops[ip].opcode), .{ip});
+inline fn tailcallNextInstruction(ip: usize) void {
+    return @call(.always_tail, funcFromOpcode(ops[ip].opcode), .{ip});
 }
 
-fn LoadImm(ip: usize) void {
+fn loadImm(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
     data.first_operand.operand.* = data.second_operand.operand.*;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn Add(ip: usize) void {
+fn add(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
     data.first_operand.operand.* = data.second_operand.operand.* +% data.third_operand.operand.*;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn Sub(ip: usize) void {
+fn sub(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
     data.first_operand.operand.* = data.second_operand.operand.* -% data.third_operand.operand.*;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn Mul(ip: usize) void {
+fn mul(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
     data.first_operand.operand.* = data.second_operand.operand.* *% data.third_operand.operand.*;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn Div(ip: usize) void {
+fn div(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
     data.first_operand.operand.* = @divTrunc(data.second_operand.operand.*, data.third_operand.operand.*);
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn BranchEq(ip: usize) void {
+fn branchEq(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
-    return advance(if (data.first_operand.operand.* == data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
+    return tailcallNextInstruction(if (data.first_operand.operand.* == data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
 }
-fn BranchNe(ip: usize) void {
+fn branchNe(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
-    return advance(if (data.first_operand.operand.* != data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
+    return tailcallNextInstruction(if (data.first_operand.operand.* != data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
 }
-fn BranchLe(ip: usize) void {
+fn branchLe(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
-    return advance(if (data.first_operand.operand.* < data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
+    return tailcallNextInstruction(if (data.first_operand.operand.* < data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
 }
-fn BranchLq(ip: usize) void {
+fn branchLq(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
-    return advance(if (data.first_operand.operand.* <= data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
+    return tailcallNextInstruction(if (data.first_operand.operand.* <= data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
 }
-fn BranchGr(ip: usize) void {
+fn branchGr(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
-    return advance(if (data.first_operand.operand.* > data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
+    return tailcallNextInstruction(if (data.first_operand.operand.* > data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
 }
-fn BranchGq(ip: usize) void {
+fn branchGq(ip: usize) void {
     const operation = ops[ip];
     const data = operation.data;
-    return advance(if (data.first_operand.operand.* >= data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
+    return tailcallNextInstruction(if (data.first_operand.operand.* >= data.second_operand.operand.*) data.third_operand.next_instruction else ip + 1);
 }
-fn PrintVar(ip: usize) void {
+fn printVar(ip: usize) void {
     const operation = ops[ip];
     output_writer.print("{}", .{operation.data.first_operand.operand.*}) catch unreachable;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn PrintLnVar(ip: usize) void {
+fn printLnVar(ip: usize) void {
     const operation = ops[ip];
     output_writer.print("{}\n", .{operation.data.first_operand.operand.*}) catch unreachable;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn PrintStr(ip: usize) void {
+fn printStr(ip: usize) void {
     const operation = ops[ip];
     output_writer.print("{s}", .{operation.data.first_operand.str_ptr[0..operation.data.second_operand.str_len]}) catch unreachable;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn PrintLnStr(ip: usize) void {
+fn printLnStr(ip: usize) void {
     const operation = ops[ip];
     output_writer.print("{s}\n", .{operation.data.first_operand.str_ptr[0..operation.data.second_operand.str_len]}) catch unreachable;
-    return advance(ip + 1);
+    return tailcallNextInstruction(ip + 1);
 }
-fn Exit(ip: usize) void {
+fn exitInterpreter(ip: usize) void {
     _ = ip;
     return;
 }
@@ -487,7 +488,7 @@ pub fn main() !void {
             else => {},
         }
     }
-    func_from_opcode(ops[0].opcode)(0);
+    funcFromOpcode(ops[0].opcode)(0);
 
     _ = stdout.write(fbstream.getWritten()) catch unreachable;
 }
