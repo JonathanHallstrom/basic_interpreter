@@ -12,9 +12,12 @@ var variables: [26]i32 align(64) = .{0} ** 26;
 var string_buf: [1 << 20]u8 align(64) = undefined;
 var string_buf_write_idx: usize = 0;
 
-var ops: [1024]Operation = undefined;
+var alloc_buf: [1 << 20]u8 align(64) = undefined;
+
+const max_ops = 1024;
+var ops: [max_ops]Operation = undefined;
 // at most 2 immediates per line
-var immediates: [2 * ops.len]i32 align(64) = .{0} ** (2 * ops.len);
+var immediates: [2 * max_ops]i32 align(64) = .{0} ** (2 * max_ops);
 var immediate_count: usize = 0;
 
 const Instruction = enum {
@@ -185,12 +188,10 @@ pub fn main() !void {
     const t1 = std.time.Instant.now() catch unreachable;
     const read_bytes = stdin.readAll(&io_buf) catch unreachable;
     const t2 = std.time.Instant.now() catch unreachable;
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
 
-    var line_numbers = std.ArrayList(u32).init(allocator);
-    defer line_numbers.deinit();
+    var fba = std.heap.FixedBufferAllocator.init(&alloc_buf);
+
+    const allocator = fba.allocator();
 
     var it: usize = 0;
     const line_keep = comptime blk: {
@@ -211,8 +212,8 @@ pub fn main() !void {
             return left.line < right.line;
         }
     };
-    var operations = std.ArrayList(ParsedOperation).init(allocator);
-    defer operations.deinit();
+    var operations: [max_ops]ParsedOperation = undefined;
+    var operation_count: usize = 0;
 
     while (it < read_bytes) {
         // longest possible line which isn't a print is '1000000000 if 1000000000 <= 1000000000 THEN GOTO 1000000000', which has length 59, so we load 64 bytes, aka one cache line
@@ -258,8 +259,6 @@ pub fn main() !void {
         var line_num: u32 = 0;
         for (0..number_length) |i| line_num = line_num * 10 + cleaned_line[i] - '0';
 
-        line_numbers.append(line_num) catch unreachable;
-
         const get_operand_pointer = struct {
             fn impl(slice: []const u8) *i32 {
                 var res: *i32 = undefined;
@@ -304,7 +303,7 @@ pub fn main() !void {
                     '>' => if (operator.len == 1) .BranchGr else .BranchGq,
                     else => unreachable,
                 };
-                operations.append(ParsedOperation{
+                operations[operation_count] = ParsedOperation{
                     .line = line_num,
                     .operation = .{
                         .opcode = opcode,
@@ -314,7 +313,7 @@ pub fn main() !void {
                             .third_operand = .{ .next_instruction = dest_value },
                         },
                     },
-                }) catch unreachable;
+                };
             },
             .Let => {
                 // find lengths of all the mandatory parts
@@ -355,7 +354,7 @@ pub fn main() !void {
                         else => unreachable,
                     };
 
-                    operations.append(.{
+                    operations[operation_count] = .{
                         .line = line_num,
                         .operation = .{
                             .opcode = opcode,
@@ -365,9 +364,9 @@ pub fn main() !void {
                                 .third_operand = .{ .operand = right_operand_pointer },
                             },
                         },
-                    }) catch unreachable;
+                    };
                 } else {
-                    operations.append(.{
+                    operations[operation_count] = .{
                         .line = line_num,
                         .operation = .{
                             .opcode = .LoadImm,
@@ -377,11 +376,10 @@ pub fn main() !void {
                                 .third_operand = .{ .unused = {} },
                             },
                         },
-                    }) catch unreachable;
+                    };
                 }
             },
-            .Print,
-            => {
+            .Print, .PrintLn => |printmode| {
                 const start_print = number_length + 1 + first_token_length + 1;
                 if (cleaned_line[start_print] == '"') {
 
@@ -395,89 +393,50 @@ pub fn main() !void {
                     const str_ptr = string_buf[string_buf_write_idx..].ptr;
                     string_buf_write_idx += str.len;
 
-                    operations.append(.{
+                    operations[operation_count] = .{
                         .line = line_num,
                         .operation = .{
-                            .opcode = .PrintStr,
+                            .opcode = if (printmode == .Print) .PrintStr else .PrintLnStr,
                             .data = .{
                                 .first_operand = .{ .str_ptr = str_ptr },
                                 .second_operand = .{ .str_len = str.len },
                                 .third_operand = .{ .unused = {} },
                             },
                         },
-                    }) catch unreachable;
+                    };
                 } else {
-                    operations.append(.{
+                    operations[operation_count] = .{
                         .line = line_num,
                         .operation = .{
-                            .opcode = .PrintVar,
+                            .opcode = if (printmode == .Print) .PrintVar else .PrintLnVar,
                             .data = .{
                                 .first_operand = .{ .operand = get_operand_pointer(cleaned_line[start_print..]) },
                                 .second_operand = .{ .unused = {} },
                                 .third_operand = .{ .unused = {} },
                             },
                         },
-                    }) catch unreachable;
-                }
-            },
-            .PrintLn,
-            => {
-                const start_print = number_length + 1 + first_token_length + 1;
-                if (cleaned_line[start_print] == '"') {
-
-                    // this is somewhat subtle, line could be longer than 64 bytes so we look at the whole buffer and update line length accordingly
-                    const end_print = start_print + 1 + std.mem.indexOfScalar(u8, io_buf[it..][start_print + 1 ..], '"').?;
-                    line_length = end_print + 1;
-
-                    // copy strings to separate buffer, io_buf will be overwritten
-                    const str = io_buf[it..][start_print + 1 .. end_print];
-                    @memcpy(string_buf[string_buf_write_idx..][0..str.len], str);
-                    const str_ptr = string_buf[string_buf_write_idx..].ptr;
-                    string_buf_write_idx += str.len;
-
-                    operations.append(ParsedOperation{
-                        .line = line_num,
-                        .operation = .{
-                            .opcode = .PrintLnStr,
-                            .data = .{
-                                .first_operand = .{ .str_ptr = str_ptr },
-                                .second_operand = .{ .str_len = str.len },
-                                .third_operand = .{ .unused = {} },
-                            },
-                        },
-                    }) catch unreachable;
-                } else {
-                    operations.append(ParsedOperation{
-                        .line = line_num,
-                        .operation = .{
-                            .opcode = .PrintLnVar,
-                            .data = .{
-                                .first_operand = .{ .operand = get_operand_pointer(cleaned_line[start_print..]) },
-                                .second_operand = .{ .unused = {} },
-                                .third_operand = .{ .unused = {} },
-                            },
-                        },
-                    }) catch unreachable;
+                    };
                 }
             },
         }
 
         it += line_length + 1;
+        operation_count += 1;
     }
     const t3 = std.time.Instant.now() catch unreachable;
 
-    std.mem.sortUnstable(ParsedOperation, operations.items, void{}, ParsedOperation.cmp);
+    std.mem.sortUnstable(ParsedOperation, operations[0..operation_count], void{}, ParsedOperation.cmp);
 
     var line_map = std.AutoArrayHashMap(u32, u32).init(allocator);
     defer line_map.deinit();
 
-    for (operations.items, 0..) |operation, i| {
+    for (operations[0..operation_count], 0..) |operation, i| {
         line_map.put(operation.line, @intCast(i)) catch unreachable;
         ops[i] = operation.operation;
     }
-    ops[operations.items.len].opcode = .Exit;
+    ops[operation_count].opcode = .Exit;
 
-    for (0..operations.items.len) |i| {
+    for (0..operation_count) |i| {
         switch (ops[i].opcode) {
             .BranchEq,
             .BranchNe,
@@ -503,20 +462,20 @@ pub fn main() !void {
     const reading = t2.since(t1);
     std.debug.print("reading input program took: {}\n", .{std.fmt.fmtDuration(reading)}); // 0.000007s on kattis
     const parsing = t3.since(t2);
-    std.debug.print("parsing input program took: {}\n", .{std.fmt.fmtDuration(parsing)}); // 0.0003s on kattis
+    std.debug.print("parsing input program took: {} ({d:.4} GB/s)\n", .{ std.fmt.fmtDuration(parsing), @as(f64, @floatFromInt(read_bytes)) / @as(f64, @floatFromInt(parsing)) }); // 0.000038 on kattis
     const fixing = t4.since(t3);
-    std.debug.print("fixing line numbers took: {}\n", .{std.fmt.fmtDuration(fixing)}); // 0.0002s on kattis
+    std.debug.print("fixing line numbers took: {}\n", .{std.fmt.fmtDuration(fixing)}); // 0.000049 on kattis
     const running = t5.since(t4);
-    std.debug.print("running program took: {}\n", .{std.fmt.fmtDuration(running)}); // 0.0029s on kattis
+    std.debug.print("running program took: {}\n", .{std.fmt.fmtDuration(running)}); // 0.0025s on kattis
     const writing = t6.since(t5);
     std.debug.print("writing output took: {}\n", .{std.fmt.fmtDuration(writing)}); // 0.000006s on kattis
     const total = t6.since(t1);
     std.debug.print("total: {}\n", .{std.fmt.fmtDuration(total)});
 }
 // prime bench results on my machine:
-// reading input program took: 3.886us
-// parsing input program took: 39.734us
-// fixing line numbers took: 10.176us
-// running program took: 396.136us
-// writing output took: 35.21us
-// total: 485.142us
+// reading input program took: 1.466us
+// parsing input program took: 6.246us (0.0711 GB/s)
+// fixing line numbers took: 4.032us
+// running program took: 465.438us
+// writing output took: 432ns
+// total: 477.614us
